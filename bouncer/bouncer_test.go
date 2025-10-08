@@ -15,6 +15,7 @@ import (
 	"github.com/kdwils/envoy-proxy-bouncer/bouncer/components"
 	remediationmocks "github.com/kdwils/envoy-proxy-bouncer/bouncer/mocks"
 	"github.com/kdwils/envoy-proxy-bouncer/cache"
+	"github.com/kdwils/envoy-proxy-bouncer/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -25,6 +26,31 @@ func parseCIDROrFail(t *testing.T, cidr string) *net.IPNet {
 		t.Fatalf("failed to parse CIDR %q: %v", cidr, err)
 	}
 	return ipnet
+}
+
+func mkReq(ip, scheme, authority, path, method, proto, body string) *auth.CheckRequest {
+	return &auth.CheckRequest{
+		Attributes: &auth.AttributeContext{
+			Source: &auth.AttributeContext_Peer{
+				Address: &core.Address{
+					Address: &core.Address_SocketAddress{SocketAddress: &core.SocketAddress{Address: ip}},
+				},
+			},
+			Request: &auth.AttributeContext_Request{
+				Http: &auth.AttributeContext_HttpRequest{
+					Headers: map[string]string{
+						":scheme":    scheme,
+						":authority": authority,
+						":path":      path,
+						":method":    method,
+						"user-agent": "UT",
+					},
+					Protocol: proto,
+					Body:     body,
+				},
+			},
+		},
+	}
 }
 
 func TestExtractRealIP(t *testing.T) {
@@ -586,12 +612,12 @@ func TestBouncer_Check(t *testing.T) {
 
 		got := r.Check(context.Background(), req)
 		want := CheckedRequest{
-			IP:            "1.2.3.4",
-			Action:        "ban",
-			Reason:        "crowdsec ban",
-			HTTPStatus:    403,
-			RedirectURL:   "",
-			Decision:      &models.Decision{Type: ptr("ban")},
+			IP:          "1.2.3.4",
+			Action:      "ban",
+			Reason:      "crowdsec ban",
+			HTTPStatus:  403,
+			RedirectURL: "",
+			Decision:    &models.Decision{Type: ptr("ban")},
 			ParsedRequest: &ParsedRequest{
 				IP:         "1.2.3.4",
 				RealIP:     "1.2.3.4",
@@ -632,12 +658,12 @@ func TestBouncer_Check(t *testing.T) {
 
 		got := r.Check(context.Background(), req)
 		want := CheckedRequest{
-			IP:            "2.2.2.2",
-			Action:        "ban",
-			Reason:        "crowdsecurity/test",
-			HTTPStatus:    403,
-			RedirectURL:   "",
-			Decision:      &models.Decision{Type: ptr("ban"), Scenario: ptr("crowdsecurity/test"), Origin: ptr("CAPI"), Duration: ptr("1h"), Scope: ptr("Ip"), Value: ptr("2.2.2.2")},
+			IP:          "2.2.2.2",
+			Action:      "ban",
+			Reason:      "crowdsecurity/test",
+			HTTPStatus:  403,
+			RedirectURL: "",
+			Decision:    &models.Decision{Type: ptr("ban"), Scenario: ptr("crowdsecurity/test"), Origin: ptr("CAPI"), Duration: ptr("1h"), Scope: ptr("Ip"), Value: ptr("2.2.2.2")},
 			ParsedRequest: &ParsedRequest{
 				IP:         "2.2.2.2",
 				RealIP:     "2.2.2.2",
@@ -670,7 +696,7 @@ func TestBouncer_Check(t *testing.T) {
 		want := CheckedRequest{
 			IP:          "5.6.7.8",
 			Action:      "deny",
-			Reason:      "decision cache error",
+			Reason:      "security service temporarily unavailable",
 			HTTPStatus:  403,
 			RedirectURL: "",
 			Decision:    nil,
@@ -721,11 +747,11 @@ func TestBouncer_Check(t *testing.T) {
 
 		got := r.Check(context.Background(), req)
 		want := CheckedRequest{
-			IP:            "9.9.9.9",
-			Action:        "ban",
-			Reason:        "ban",
-			HTTPStatus:    403,
-			RedirectURL:   "",
+			IP:          "9.9.9.9",
+			Action:      "ban",
+			Reason:      "ban",
+			HTTPStatus:  403,
+			RedirectURL: "",
 			ParsedRequest: &ParsedRequest{
 				IP:         "9.9.9.9",
 				RealIP:     "9.9.9.9",
@@ -769,7 +795,7 @@ func TestBouncer_Check(t *testing.T) {
 		want := CheckedRequest{
 			IP:         "10.0.0.1",
 			Action:     "error",
-			Reason:     "error",
+			Reason:     "security inspection service temporarily unavailable",
 			HTTPStatus: 500,
 			ParsedRequest: &ParsedRequest{
 				IP:         "10.0.0.1",
@@ -1079,7 +1105,7 @@ func TestBouncer_Check_AllScenarios(t *testing.T) {
 		want := CheckedRequest{
 			IP:          "3.3.3.3",
 			Action:      "deny",
-			Reason:      "decision cache error",
+			Reason:      "security service temporarily unavailable",
 			HTTPStatus:  403,
 			RedirectURL: "",
 			Decision:    nil,
@@ -1192,7 +1218,7 @@ func TestBouncer_Check_AllScenarios(t *testing.T) {
 		want := CheckedRequest{
 			IP:         "6.6.6.6",
 			Action:     "error",
-			Reason:     "error",
+			Reason:     "security inspection service temporarily unavailable",
 			HTTPStatus: 500,
 			ParsedRequest: &ParsedRequest{
 				IP:         "6.6.6.6",
@@ -1363,7 +1389,7 @@ func TestBouncer_Check_AllScenarios(t *testing.T) {
 		mc.EXPECT().CreateSession("13.13.13.13", "https://example.com/test").Return(nil, fmt.Errorf("session creation failed"))
 
 		got := r.Check(context.Background(), req)
-		if got.Action != "error" || got.Reason != "captcha error" || got.HTTPStatus != 500 || got.IP != "13.13.13.13" {
+		if got.Action != "error" || got.Reason != "challenge service temporarily unavailable" || got.HTTPStatus != 500 || got.IP != "13.13.13.13" {
 			t.Fatalf("unexpected result: %+v", got)
 		}
 	})
@@ -1614,4 +1640,158 @@ func TestBouncer_CalculateMetrics_FieldStructure(t *testing.T) {
 	}
 
 	require.ElementsMatch(t, expectedItems, detailedMetrics.Items)
+}
+
+func TestBouncer_Check_FailsafeMode(t *testing.T) {
+	t.Run("decision cache error - fail open", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mb := remediationmocks.NewMockDecisionCache(ctrl)
+		mw := remediationmocks.NewMockWAF(ctrl)
+		cfg := config.Config{FailsafeMode: "open"}
+		r := Bouncer{DecisionCache: mb, WAF: mw, config: cfg, metrics: cache.New[RemediationMetrics]()}
+
+		req := mkReq("5.6.7.8", "http", "example.com", "/foo", "GET", "HTTP/1.1", "")
+
+		mb.EXPECT().GetDecision(gomock.Any(), "5.6.7.8").Return(nil, fmt.Errorf("connection failed"))
+		// WAF will still be called because decision cache fails open
+		mw.EXPECT().Inspect(gomock.Any(), gomock.AssignableToTypeOf(components.AppSecRequest{})).Return(components.WAFResponse{Action: "allow"}, nil)
+
+		got := r.Check(context.Background(), req)
+		want := CheckedRequest{
+			IP:          "5.6.7.8",
+			Action:      "allow",
+			Reason:      "ok",
+			HTTPStatus:  200,
+			RedirectURL: "",
+			Decision:    nil,
+			ParsedRequest: &ParsedRequest{
+				IP:         "5.6.7.8",
+				RealIP:     "5.6.7.8",
+				URL:        url.URL{Scheme: "http", Host: "example.com", Path: "/foo"},
+				Method:     "GET",
+				Headers:    map[string]string{":authority": "example.com", ":method": "GET", ":path": "/foo", ":scheme": "http", "user-agent": "UT"},
+				Body:       []byte{},
+				ProtoMajor: 1,
+				ProtoMinor: 1,
+				UserAgent:  "UT",
+			},
+		}
+
+		require.Equal(t, want, got)
+	})
+
+	t.Run("decision cache error - fail closed", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mb := remediationmocks.NewMockDecisionCache(ctrl)
+		mw := remediationmocks.NewMockWAF(ctrl)
+		cfg := config.Config{FailsafeMode: "closed"}
+		r := Bouncer{DecisionCache: mb, WAF: mw, config: cfg, metrics: cache.New[RemediationMetrics]()}
+
+		req := mkReq("5.6.7.8", "http", "example.com", "/foo", "GET", "HTTP/1.1", "")
+
+		mb.EXPECT().GetDecision(gomock.Any(), "5.6.7.8").Return(nil, fmt.Errorf("connection failed"))
+
+		got := r.Check(context.Background(), req)
+		want := CheckedRequest{
+			IP:          "5.6.7.8",
+			Action:      "deny",
+			Reason:      "security service temporarily unavailable",
+			HTTPStatus:  403,
+			RedirectURL: "",
+			Decision:    nil,
+			ParsedRequest: &ParsedRequest{
+				IP:         "5.6.7.8",
+				RealIP:     "5.6.7.8",
+				URL:        url.URL{Scheme: "http", Host: "example.com", Path: "/foo"},
+				Method:     "GET",
+				Headers:    map[string]string{":authority": "example.com", ":method": "GET", ":path": "/foo", ":scheme": "http", "user-agent": "UT"},
+				Body:       []byte{},
+				ProtoMajor: 1,
+				ProtoMinor: 1,
+				UserAgent:  "UT",
+			},
+		}
+
+		require.Equal(t, want, got)
+	})
+
+	t.Run("waf error - fail open", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mb := remediationmocks.NewMockDecisionCache(ctrl)
+		mw := remediationmocks.NewMockWAF(ctrl)
+		cfg := config.Config{FailsafeMode: "open"}
+		r := Bouncer{DecisionCache: mb, WAF: mw, config: cfg, metrics: cache.New[RemediationMetrics]()}
+
+		req := mkReq("5.6.7.8", "http", "example.com", "/foo", "GET", "HTTP/1.1", "")
+
+		mb.EXPECT().GetDecision(gomock.Any(), "5.6.7.8").Return(nil, nil)
+		mw.EXPECT().Inspect(gomock.Any(), gomock.AssignableToTypeOf(components.AppSecRequest{})).Return(components.WAFResponse{}, fmt.Errorf("appsec down"))
+
+		got := r.Check(context.Background(), req)
+		want := CheckedRequest{
+			IP:          "5.6.7.8",
+			Action:      "allow",
+			Reason:      "waf error - failing open",
+			HTTPStatus:  200,
+			RedirectURL: "",
+			Decision:    nil,
+			ParsedRequest: &ParsedRequest{
+				IP:         "5.6.7.8",
+				RealIP:     "5.6.7.8",
+				URL:        url.URL{Scheme: "http", Host: "example.com", Path: "/foo"},
+				Method:     "GET",
+				Headers:    map[string]string{":authority": "example.com", ":method": "GET", ":path": "/foo", ":scheme": "http", "user-agent": "UT"},
+				Body:       []byte{},
+				ProtoMajor: 1,
+				ProtoMinor: 1,
+				UserAgent:  "UT",
+			},
+		}
+
+		require.Equal(t, want, got)
+	})
+
+	t.Run("waf error - fail closed", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mb := remediationmocks.NewMockDecisionCache(ctrl)
+		mw := remediationmocks.NewMockWAF(ctrl)
+		cfg := config.Config{FailsafeMode: "closed"}
+		r := Bouncer{DecisionCache: mb, WAF: mw, config: cfg, metrics: cache.New[RemediationMetrics]()}
+
+		req := mkReq("5.6.7.8", "http", "example.com", "/foo", "GET", "HTTP/1.1", "")
+
+		mb.EXPECT().GetDecision(gomock.Any(), "5.6.7.8").Return(nil, nil)
+		mw.EXPECT().Inspect(gomock.Any(), gomock.AssignableToTypeOf(components.AppSecRequest{})).Return(components.WAFResponse{}, fmt.Errorf("appsec down"))
+
+		got := r.Check(context.Background(), req)
+		want := CheckedRequest{
+			IP:          "5.6.7.8",
+			Action:      "error",
+			Reason:      "security inspection service temporarily unavailable",
+			HTTPStatus:  500,
+			RedirectURL: "",
+			Decision:    nil,
+			ParsedRequest: &ParsedRequest{
+				IP:         "5.6.7.8",
+				RealIP:     "5.6.7.8",
+				URL:        url.URL{Scheme: "http", Host: "example.com", Path: "/foo"},
+				Method:     "GET",
+				Headers:    map[string]string{":authority": "example.com", ":method": "GET", ":path": "/foo", ":scheme": "http", "user-agent": "UT"},
+				Body:       []byte{},
+				ProtoMajor: 1,
+				ProtoMinor: 1,
+				UserAgent:  "UT",
+			},
+		}
+
+		require.Equal(t, want, got)
+	})
 }

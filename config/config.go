@@ -14,6 +14,7 @@ type Config struct {
 	Captcha        Captcha   `yaml:"captcha" json:"captcha"`
 	TrustedProxies []string  `yaml:"trustedProxies" json:"trustedProxies"`
 	Templates      Templates `yaml:"templates" json:"templates"`
+	FailsafeMode   string    `yaml:"failsafeMode" json:"failsafeMode"`
 }
 
 type Server struct {
@@ -67,5 +68,13 @@ func New(v *viper.Viper) (Config, error) {
 		}
 	}
 	err := v.Unmarshal(&c)
-	return c, err
+	if err != nil {
+		return c, err
+	}
+
+	if c.FailsafeMode != "open" && c.FailsafeMode != "closed" {
+		return c, errors.New("failsafeMode must be either 'open' or 'closed'")
+	}
+
+	return c, nil
 }

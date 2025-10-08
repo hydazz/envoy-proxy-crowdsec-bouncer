@@ -134,6 +134,13 @@ func New(cfg config.Config) (*Bouncer, error) {
 	return bouncer, nil
 }
 
+func (b *Bouncer) getFailsafeAction() string {
+	if b.config.FailsafeMode == "open" {
+		return "allow"
+	}
+	return "error"
+}
+
 func (bouncer *Bouncer) CalculateMetrics(interval time.Duration) *models.AllMetrics {
 	currentMetrics := bouncer.GetMetrics()
 
@@ -463,7 +470,11 @@ func (b *Bouncer) Check(ctx context.Context, req *auth.CheckRequest) CheckedRequ
 	wafResult := b.checkWAF(ctx, parsed)
 	switch wafResult.Action {
 	case "allow":
-		finalResult := NewCheckedRequest(parsed.RealIP, "allow", "ok", http.StatusOK, bouncerResult.Decision, "", parsed, nil)
+		reason := "ok"
+		if strings.Contains(wafResult.Reason, "error") && strings.Contains(wafResult.Reason, "failing open") {
+			reason = wafResult.Reason
+		}
+		finalResult := NewCheckedRequest(parsed.RealIP, "allow", reason, http.StatusOK, bouncerResult.Decision, "", parsed, nil)
 		b.recordFinalMetric(finalResult)
 		return finalResult
 	case "captcha":
@@ -493,7 +504,11 @@ func (b *Bouncer) checkDecisionCache(ctx context.Context, parsed *ParsedRequest)
 	decision, err := b.DecisionCache.GetDecision(ctx, parsed.RealIP)
 	if err != nil {
 		logger.Error("decision cache error", "error", err)
-		return NewCheckedRequest(parsed.RealIP, "error", "decision cache error", http.StatusInternalServerError, nil, "", parsed, nil)
+		failsafeAction := b.getFailsafeAction()
+		if failsafeAction == "allow" {
+			return NewCheckedRequest(parsed.RealIP, "allow", "decision cache error - failing open", http.StatusOK, nil, "", parsed, nil)
+		}
+		return NewCheckedRequest(parsed.RealIP, "error", "security service temporarily unavailable", http.StatusInternalServerError, nil, "", parsed, nil)
 	}
 
 	if decision == nil {
@@ -534,7 +549,12 @@ func (b *Bouncer) checkCaptcha(ctx context.Context, parsed *ParsedRequest, decis
 
 	session, err := b.CaptchaService.CreateSession(parsed.RealIP, originalURL)
 	if err != nil {
-		return NewCheckedRequest(parsed.RealIP, "error", "captcha error", http.StatusInternalServerError, nil, "", parsed, nil)
+		logger.Error("captcha error", "error", err)
+		failsafeAction := b.getFailsafeAction()
+		if failsafeAction == "allow" {
+			return NewCheckedRequest(parsed.RealIP, "allow", "captcha error - failing open", http.StatusOK, nil, "", parsed, nil)
+		}
+		return NewCheckedRequest(parsed.RealIP, "error", "challenge service temporarily unavailable", http.StatusInternalServerError, nil, "", parsed, nil)
 	}
 	if session == nil {
 		return NewCheckedRequest(parsed.RealIP, "allow", "captcha not required", http.StatusOK, nil, "", parsed, nil)
@@ -564,7 +584,11 @@ func (b *Bouncer) checkWAF(ctx context.Context, parsed *ParsedRequest) CheckedRe
 	wafResult, wafErr := b.WAF.Inspect(ctx, wafReq)
 	if wafErr != nil {
 		logger.Error("waf error", "error", wafErr)
-		return NewCheckedRequest(parsed.RealIP, "error", "error", http.StatusInternalServerError, nil, "", parsed, nil)
+		failsafeAction := b.getFailsafeAction()
+		if failsafeAction == "allow" {
+			return NewCheckedRequest(parsed.RealIP, "allow", "waf error - failing open", http.StatusOK, nil, "", parsed, nil)
+		}
+		return NewCheckedRequest(parsed.RealIP, "error", "security inspection service temporarily unavailable", http.StatusInternalServerError, nil, "", parsed, nil)
 	}
 
 	if wafResult.Action != "allow" {

@@ -29,6 +29,7 @@ func TestNew(t *testing.T) {
 		v.Set("waf.timeout", "30s")
 		v.Set("waf.apiKey", "test-key")
 		v.Set("waf.appSecURL", "http://test.com")
+		v.Set("failsafeMode", "closed")
 
 		c, err := New(v)
 		assert.NoError(t, err)
@@ -43,5 +44,25 @@ func TestNew(t *testing.T) {
 		assert.True(t, c.WAF.Enabled)
 		assert.Equal(t, "test-key", c.WAF.ApiKey)
 		assert.Equal(t, "http://test.com", c.WAF.AppSecURL)
+		assert.Equal(t, "closed", c.FailsafeMode)
+	})
+
+	t.Run("invalid failsafe mode", func(t *testing.T) {
+		v := viper.New()
+		v.Set("failsafeMode", "invalid")
+
+		c, err := New(v)
+		assert.Error(t, err)
+		assert.Equal(t, "failsafeMode must be either 'open' or 'closed'", err.Error())
+		assert.Equal(t, "invalid", c.FailsafeMode)
+	})
+
+	t.Run("valid failsafe mode open", func(t *testing.T) {
+		v := viper.New()
+		v.Set("failsafeMode", "open")
+
+		c, err := New(v)
+		assert.NoError(t, err)
+		assert.Equal(t, "open", c.FailsafeMode)
 	})
 }

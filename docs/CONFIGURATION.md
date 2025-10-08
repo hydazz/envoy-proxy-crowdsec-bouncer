@@ -54,6 +54,8 @@ templates:
   deniedTemplateHeaders: ""                 # Content-Type header for ban page
   captchaTemplatePath: ""                   # Path to custom CAPTCHA page template
   captchaTemplateHeaders: ""                # Content-Type header for CAPTCHA page
+
+failsafeMode: "closed"                      # Whether to block or allow connections if LAPI/AppSec is unreachable (open/closed)
 ```
 
 Start with config file:
@@ -103,6 +105,8 @@ export ENVOY_BOUNCER_TEMPLATES_DENIEDTEMPLATEPATH=/path/to/ban.html
 export ENVOY_BOUNCER_TEMPLATES_DENIEDTEMPLATEHEADERS="text/html; charset=utf-8"
 export ENVOY_BOUNCER_TEMPLATES_CAPTCHATEMPLATEPATH=/path/to/captcha.html
 export ENVOY_BOUNCER_TEMPLATES_CAPTCHATEMPLATEHEADERS="text/html; charset=utf-8"
+
+export ENVOY_BOUNCER_FAILSAFEMODE=closed
 ```
 
 ## Configuration Sections
